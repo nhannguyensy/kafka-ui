@@ -6,26 +6,28 @@ import {
 import jsf from 'json-schema-faker';
 import { compact } from 'lodash';
 import Ajv, { DefinedError } from 'ajv/dist/2020';
+import addFormats from 'ajv-formats';
 import upperFirst from 'lodash/upperFirst';
 
 jsf.option('fillProperties', false);
 jsf.option('alwaysFakeOptionals', true);
+jsf.option('failOnInvalidFormat', false);
 
-const generateValueFromSchema = (preffered?: SerdeDescription) => {
-  if (!preffered?.schema) {
+const generateValueFromSchema = (preferred?: SerdeDescription) => {
+  if (!preferred?.schema) {
     return undefined;
   }
-  const parsedSchema = JSON.parse(preffered.schema);
+  const parsedSchema = JSON.parse(preferred.schema);
   const value = jsf.generate(parsedSchema);
   return JSON.stringify(value);
 };
 
-export const getPrefferedDescription = (serdes: SerdeDescription[]) =>
+export const getPreferredDescription = (serdes: SerdeDescription[]) =>
   serdes.find((s) => s.preferred);
 
 export const getDefaultValues = (serdes: TopicSerdeSuggestion) => {
-  const keySerde = getPrefferedDescription(serdes.key || []);
-  const valueSerde = getPrefferedDescription(serdes.value || []);
+  const keySerde = getPreferredDescription(serdes.key || []);
+  const valueSerde = getPreferredDescription(serdes.value || []);
 
   return {
     key: generateValueFromSchema(keySerde),
@@ -63,15 +65,15 @@ export const validateBySchema = (
     return errors;
   }
 
-  let parcedSchema;
+  let parsedSchema;
   let parsedValue;
 
   try {
-    parcedSchema = JSON.parse(schema);
+    parsedSchema = JSON.parse(schema);
   } catch (e) {
     return [`Error in parsing the "${type}" field schema`];
   }
-  if (parcedSchema.type === 'string') {
+  if (parsedSchema.type === 'string') {
     return [];
   }
   try {
@@ -80,7 +82,9 @@ export const validateBySchema = (
     return [`Error in parsing the "${type}" field value`];
   }
   try {
-    const validate = new Ajv().compile(parcedSchema);
+    const ajv = new Ajv();
+    addFormats(ajv);
+    const validate = ajv.compile(parsedSchema);
     validate(parsedValue);
     if (validate.errors) {
       errors = validate.errors.map(

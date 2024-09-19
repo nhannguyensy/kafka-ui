@@ -10,7 +10,6 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.apache.kafka.common.header.Headers;
 
 
 public class UuidBinarySerde implements BuiltInSerde {
@@ -19,14 +18,14 @@ public class UuidBinarySerde implements BuiltInSerde {
     return "UUIDBinary";
   }
 
-  private boolean mostSignificantBitsFirst;
+  private boolean mostSignificantBitsFirst = true;
 
   @Override
   public void configure(PropertyResolver serdeProperties,
                         PropertyResolver kafkaClusterProperties,
                         PropertyResolver globalProperties) {
-    mostSignificantBitsFirst = serdeProperties.getProperty("mostSignificantBitsFirst", Boolean.class)
-        .orElse(true);
+    serdeProperties.getProperty("mostSignificantBitsFirst", Boolean.class)
+        .ifPresent(msb -> UuidBinarySerde.this.mostSignificantBitsFirst = msb);
   }
 
   @Override
@@ -51,41 +50,35 @@ public class UuidBinarySerde implements BuiltInSerde {
 
   @Override
   public Serializer serializer(String topic, Target type) {
-    return new Serializer() {
-      @Override
-      public byte[] serialize(String input) {
-        UUID uuid = UUID.fromString(input);
-        ByteBuffer bb = ByteBuffer.wrap(new byte[16]);
-        if (mostSignificantBitsFirst) {
-          bb.putLong(uuid.getMostSignificantBits());
-          bb.putLong(uuid.getLeastSignificantBits());
-        } else {
-          bb.putLong(uuid.getLeastSignificantBits());
-          bb.putLong(uuid.getMostSignificantBits());
-        }
-        return bb.array();
+    return input -> {
+      UUID uuid = UUID.fromString(input);
+      ByteBuffer bb = ByteBuffer.wrap(new byte[16]);
+      if (mostSignificantBitsFirst) {
+        bb.putLong(uuid.getMostSignificantBits());
+        bb.putLong(uuid.getLeastSignificantBits());
+      } else {
+        bb.putLong(uuid.getLeastSignificantBits());
+        bb.putLong(uuid.getMostSignificantBits());
       }
+      return bb.array();
     };
   }
 
   @Override
   public Deserializer deserializer(String topic, Target type) {
-    return new Deserializer() {
-      @Override
-      public DeserializeResult deserialize(RecordHeaders headers, byte[] data) {
-        if (data.length != 16) {
-          throw new ValidationException("UUID data should be 16 bytes, but it is " + data.length);
-        }
-        ByteBuffer bb = ByteBuffer.wrap(data);
-        long msb = bb.getLong();
-        long lsb = bb.getLong();
-        UUID uuid = mostSignificantBitsFirst ? new UUID(msb, lsb) : new UUID(lsb, msb);
-        return new DeserializeResult(
-            uuid.toString(),
-            DeserializeResult.Type.STRING,
-            Map.of()
-        );
+    return (headers, data) -> {
+      if (data.length != 16) {
+        throw new ValidationException("UUID data should be 16 bytes, but it is " + data.length);
       }
+      ByteBuffer bb = ByteBuffer.wrap(data);
+      long msb = bb.getLong();
+      long lsb = bb.getLong();
+      UUID uuid = mostSignificantBitsFirst ? new UUID(msb, lsb) : new UUID(lsb, msb);
+      return new DeserializeResult(
+          uuid.toString(),
+          DeserializeResult.Type.STRING,
+          Map.of()
+      );
     };
   }
 }

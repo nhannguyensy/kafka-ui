@@ -8,7 +8,7 @@ import {
 
 export type TopicName = Topic['name'];
 
-interface TopicConfigParams {
+export interface TopicConfigParams {
   [paramName: string]: TopicConfig;
 }
 
@@ -23,7 +23,7 @@ interface TopicFormCustomParams {
 
 export type TopicFormFormattedParams = TopicCreation['configs'];
 
-export interface TopicFormDataRaw {
+interface TopicFormDataModified {
   name: string;
   partitions: number;
   replicationFactor: number;
@@ -35,6 +35,8 @@ export interface TopicFormDataRaw {
   customParams: TopicFormCustomParams;
 }
 
+export type TopicFormDataRaw = Partial<TopicFormDataModified>;
+
 export interface TopicFormData {
   name: string;
   partitions: number;
@@ -42,7 +44,6 @@ export interface TopicFormData {
   minInSyncReplicas: number;
   cleanupPolicy: string;
   retentionMs: number;
-  retentionBytes: number;
   maxMessageBytes: number;
   customParams: {
     name: string;
@@ -54,5 +55,6 @@ export interface TopicMessagesState {
   messages: TopicMessage[];
   phase?: string;
   meta: TopicMessageConsuming;
+  messageEventType?: string;
   isFetching: boolean;
 }

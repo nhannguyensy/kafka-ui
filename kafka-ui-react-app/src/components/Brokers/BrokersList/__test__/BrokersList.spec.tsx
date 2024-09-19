@@ -2,7 +2,6 @@ import React from 'react';
 import { render, WithRoute } from 'lib/testHelpers';
 import { screen, waitFor } from '@testing-library/dom';
 import { clusterBrokerPath, clusterBrokersPath } from 'lib/paths';
-import { act } from '@testing-library/react';
 import BrokersList from 'components/Brokers/BrokersList/BrokersList';
 import userEvent from '@testing-library/user-event';
 import { useBrokers } from 'lib/hooks/api/brokers';
@@ -57,12 +56,11 @@ describe('BrokersList Component', () => {
       });
       it('opens broker when row clicked', async () => {
         renderComponent();
-        await act(() => {
-          userEvent.click(screen.getByRole('cell', { name: '0' }));
-        });
+        await userEvent.click(screen.getByRole('cell', { name: '100' }));
+
         await waitFor(() =>
           expect(mockedUsedNavigate).toBeCalledWith(
-            clusterBrokerPath(clusterName, '0')
+            clusterBrokerPath(clusterName, '100')
           )
         );
       });
@@ -126,6 +124,39 @@ describe('BrokersList Component', () => {
       });
     });
 
+    describe('BrokersList', () => {
+      describe('when the brokers are loaded', () => {
+        const testActiveControllers = 0;
+        beforeEach(() => {
+          (useBrokers as jest.Mock).mockImplementation(() => ({
+            data: brokersPayload,
+          }));
+          (useClusterStats as jest.Mock).mockImplementation(() => ({
+            data: clusterStatsPayload,
+          }));
+        });
+
+        it(`Indicates correct active cluster`, async () => {
+          renderComponent();
+          await waitFor(() =>
+            expect(screen.getByRole('tooltip')).toBeInTheDocument()
+          );
+        });
+        it(`Correct display even if there is no active cluster: ${testActiveControllers} `, async () => {
+          (useClusterStats as jest.Mock).mockImplementation(() => ({
+            data: {
+              ...clusterStatsPayload,
+              activeControllers: testActiveControllers,
+            },
+          }));
+          renderComponent();
+          await waitFor(() =>
+            expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+          );
+        });
+      });
+    });
+
     describe('when diskUsage is empty', () => {
       beforeEach(() => {
         (useBrokers as jest.Mock).mockImplementation(() => ({
@@ -136,12 +167,36 @@ describe('BrokersList Component', () => {
         }));
       });
 
-      it('renders empty table', async () => {
+      describe('when it has no brokers', () => {
+        beforeEach(() => {
+          (useBrokers as jest.Mock).mockImplementation(() => ({
+            data: [],
+          }));
+        });
+
+        it('renders empty table', async () => {
+          renderComponent();
+          expect(screen.getByRole('table')).toBeInTheDocument();
+          expect(
+            screen.getByRole('row', { name: 'No clusters are online' })
+          ).toBeInTheDocument();
+        });
+      });
+
+      it('renders list of all brokers', async () => {
         renderComponent();
         expect(screen.getByRole('table')).toBeInTheDocument();
-        expect(
-          screen.getByRole('row', { name: 'Disk usage data not available' })
-        ).toBeInTheDocument();
+        expect(screen.getAllByRole('row').length).toEqual(3);
+      });
+      it('opens broker when row clicked', async () => {
+        renderComponent();
+        await userEvent.click(screen.getByRole('cell', { name: '100' }));
+
+        await waitFor(() =>
+          expect(mockedUsedNavigate).toBeCalledWith(
+            clusterBrokerPath(clusterName, '100')
+          )
+        );
       });
     });
   });

@@ -5,7 +5,7 @@ import TimeToRetainBtn, {
   Props,
 } from 'components/Topics/shared/Form/TimeToRetainBtn';
 import { useForm, FormProvider } from 'react-hook-form';
-import theme from 'theme/theme';
+import { theme } from 'theme/theme';
 import userEvent from '@testing-library/user-event';
 
 describe('TimeToRetainBtn', () => {
@@ -42,15 +42,15 @@ describe('TimeToRetainBtn', () => {
     it('should test the non active state of the button and its styling', () => {
       const buttonElement = screen.getByRole('button');
       expect(buttonElement).toHaveStyle(
-        `background-color:${theme.button.secondary.backgroundColor.normal}`
+        `background-color:${theme.chips.backgroundColor.normal}`
       );
       expect(buttonElement).toHaveStyle(`border:none`);
     });
-    it('should test the non active state with click becoming active', () => {
+    it('should test the non active state with click becoming active', async () => {
       const buttonElement = screen.getByRole('button');
-      userEvent.click(buttonElement);
+      await userEvent.click(buttonElement);
       expect(buttonElement).toHaveStyle(
-        `background-color:${theme.button.secondary.invertedColors.normal}`
+        `background-color:${theme.chips.backgroundColor.active}`
       );
       expect(buttonElement).toHaveStyle(`border:none`);
     });

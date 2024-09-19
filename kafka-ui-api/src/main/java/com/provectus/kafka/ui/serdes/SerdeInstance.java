@@ -2,21 +2,23 @@ package com.provectus.kafka.ui.serdes;
 
 import com.provectus.kafka.ui.serde.api.SchemaDescription;
 import com.provectus.kafka.ui.serde.api.Serde;
+import java.io.Closeable;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
-
+@Slf4j
 @RequiredArgsConstructor
-public class SerdeInstance {
+public class SerdeInstance implements Closeable {
 
   @Getter
-  private final String name;
+  final String name;
 
-  private final Serde serde;
+  final Serde serde;
 
   @Nullable
   final Pattern topicKeyPattern;
@@ -25,7 +27,7 @@ public class SerdeInstance {
   final Pattern topicValuePattern;
 
   @Nullable // will be set for custom serdes
-  private final ClassLoader classLoader;
+  final ClassLoader classLoader;
 
   private <T> T wrapWithClassloader(Supplier<T> call) {
     if (classLoader == null) {
@@ -40,19 +42,39 @@ public class SerdeInstance {
   }
 
   public Optional<SchemaDescription> getSchema(String topic, Serde.Target type) {
-    return wrapWithClassloader(() -> serde.getSchema(topic, type));
+    try {
+      return wrapWithClassloader(() -> serde.getSchema(topic, type));
+    } catch (Exception e) {
+      log.warn("Error getting schema for '{}'({}) with serde '{}'", topic, type, name, e);
+      return Optional.empty();
+    }
   }
 
   public Optional<String> description() {
-    return wrapWithClassloader(serde::getDescription);
+    try {
+      return wrapWithClassloader(serde::getDescription);
+    } catch (Exception e) {
+      log.warn("Error getting description serde '{}'", name, e);
+      return Optional.empty();
+    }
   }
 
   public boolean canSerialize(String topic, Serde.Target type) {
-    return wrapWithClassloader(() -> serde.canSerialize(topic, type));
+    try {
+      return wrapWithClassloader(() -> serde.canSerialize(topic, type));
+    } catch (Exception e) {
+      log.warn("Error calling canSerialize for '{}'({}) with serde '{}'", topic, type, name, e);
+      return false;
+    }
   }
 
   public boolean canDeserialize(String topic, Serde.Target type) {
-    return wrapWithClassloader(() -> serde.canDeserialize(topic, type));
+    try {
+      return wrapWithClassloader(() -> serde.canDeserialize(topic, type));
+    } catch (Exception e) {
+      log.warn("Error calling canDeserialize for '{}'({}) with serde '{}'", topic, type, name, e);
+      return false;
+    }
   }
 
   public Serde.Serializer serializer(String topic, Serde.Target type) {
@@ -66,6 +88,18 @@ public class SerdeInstance {
     return wrapWithClassloader(() -> {
       var deserializer = serde.deserializer(topic, type);
       return (headers, data) -> wrapWithClassloader(() -> deserializer.deserialize(headers, data));
+    });
+  }
+
+  @Override
+  public void close() {
+    wrapWithClassloader(() -> {
+      try {
+        serde.close();
+      } catch (Exception e) {
+        log.error("Error closing serde " + name, e);
+      }
+      return null;
     });
   }
 }

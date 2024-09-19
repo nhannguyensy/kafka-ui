@@ -1,28 +1,26 @@
 import React from 'react';
-import styled from 'styled-components';
 import useDataSaver from 'lib/hooks/useDataSaver';
 import { TopicMessage } from 'generated-sources';
-import { useTimeFormat } from 'lib/hooks/useTimeFormat';
 import MessageToggleIcon from 'components/common/Icons/MessageToggleIcon';
 import IconButtonWrapper from 'components/common/Icons/IconButtonWrapper';
 import { Dropdown, DropdownItem } from 'components/common/Dropdown';
+import { formatTimestamp } from 'lib/dateTimeHelpers';
+import { JSONPath } from 'jsonpath-plus';
+import Ellipsis from 'components/common/Ellipsis/Ellipsis';
+import WarningRedIcon from 'components/common/Icons/WarningRedIcon';
+import Tooltip from 'components/common/Tooltip/Tooltip';
 
 import MessageContent from './MessageContent/MessageContent';
 import * as S from './MessageContent/MessageContent.styled';
 
-const StyledDataCell = styled.td`
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  max-width: 350px;
-  min-width: 350px;
-`;
-
-const ClickableRow = styled.tr`
-  cursor: pointer;
-`;
+export interface PreviewFilter {
+  field: string;
+  path: string;
+}
 
 export interface Props {
+  keyFilters: PreviewFilter[];
+  contentFilters: PreviewFilter[];
   message: TopicMessage;
 }
 
@@ -32,23 +30,26 @@ const Message: React.FC<Props> = ({
     timestampType,
     offset,
     key,
+    keySize,
     partition,
     content,
-    valueFormat,
-    keyFormat,
+    valueSize,
     headers,
+    valueSerde,
+    keySerde,
   },
+  keyFilters,
+  contentFilters,
 }) => {
   const [isOpen, setIsOpen] = React.useState(false);
   const savedMessageJson = {
-    Content: content,
+    Value: content,
     Offset: offset,
     Key: key,
     Partition: partition,
     Headers: headers,
     Timestamp: timestamp,
   };
-  const formatTimestamp = useTimeFormat();
 
   const savedMessage = JSON.stringify(savedMessageJson, null, '\t');
   const { copyToClipboard, saveFile } = useDataSaver(
@@ -60,9 +61,40 @@ const Message: React.FC<Props> = ({
 
   const [vEllipsisOpen, setVEllipsisOpen] = React.useState(false);
 
+  const getParsedJson = (jsonValue: string) => {
+    try {
+      return JSON.parse(jsonValue);
+    } catch (e) {
+      return {};
+    }
+  };
+
+  const renderFilteredJson = (
+    jsonValue?: string,
+    filters?: PreviewFilter[]
+  ) => {
+    if (!filters?.length || !jsonValue) return jsonValue;
+    const parsedJson = getParsedJson(jsonValue);
+
+    return (
+      <>
+        {filters.map((item) => {
+          return (
+            <div key={`${item.path}--${item.field}`}>
+              {item.field}:{' '}
+              {JSON.stringify(
+                JSONPath({ path: item.path, json: parsedJson, wrap: false })
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  };
+
   return (
     <>
-      <ClickableRow
+      <S.ClickableRow
         onMouseEnter={() => setVEllipsisOpen(true)}
         onMouseLeave={() => setVEllipsisOpen(false)}
         onClick={toggleIsOpen}
@@ -77,12 +109,32 @@ const Message: React.FC<Props> = ({
         <td>
           <div>{formatTimestamp(timestamp)}</div>
         </td>
-        <StyledDataCell title={key}>{key}</StyledDataCell>
-        <StyledDataCell>
+        <S.DataCell title={key}>
+          <Ellipsis text={renderFilteredJson(key, keyFilters)}>
+            {keySerde === 'Fallback' && (
+              <Tooltip
+                value={<WarningRedIcon />}
+                content="Fallback serde was used"
+                placement="left"
+              />
+            )}
+          </Ellipsis>
+        </S.DataCell>
+        <S.DataCell title={content}>
           <S.Metadata>
-            <S.MetadataValue>{content}</S.MetadataValue>
+            <S.MetadataValue>
+              <Ellipsis text={renderFilteredJson(content, contentFilters)}>
+                {valueSerde === 'Fallback' && (
+                  <Tooltip
+                    value={<WarningRedIcon />}
+                    content="Fallback serde was used"
+                    placement="left"
+                  />
+                )}
+              </Ellipsis>
+            </S.MetadataValue>
           </S.Metadata>
-        </StyledDataCell>
+        </S.DataCell>
         <td style={{ width: '5%' }}>
           {vEllipsisOpen && (
             <Dropdown>
@@ -93,16 +145,18 @@ const Message: React.FC<Props> = ({
             </Dropdown>
           )}
         </td>
-      </ClickableRow>
+      </S.ClickableRow>
       {isOpen && (
         <MessageContent
           messageKey={key}
-          messageKeyFormat={keyFormat}
           messageContent={content}
-          messageContentFormat={valueFormat}
           headers={headers}
           timestamp={timestamp}
           timestampType={timestampType}
+          keySize={keySize}
+          contentSize={valueSize}
+          keySerde={keySerde}
+          valueSerde={valueSerde}
         />
       )}
     </>

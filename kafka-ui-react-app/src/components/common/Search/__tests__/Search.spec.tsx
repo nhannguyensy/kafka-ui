@@ -24,11 +24,11 @@ describe('Search', () => {
       setSearchParamsMock,
     ]);
   });
-  it('calls handleSearch on input', () => {
+  it('calls handleSearch on input', async () => {
     render(<Search placeholder={placeholder} />);
     const input = screen.getByPlaceholderText(placeholder);
-    userEvent.click(input);
-    userEvent.keyboard('value');
+    await userEvent.click(input);
+    await userEvent.keyboard('value');
     expect(setSearchParamsMock).toHaveBeenCalledTimes(5);
   });
 
@@ -40,5 +40,25 @@ describe('Search', () => {
   it('when placeholder is not provided', () => {
     render(<Search />);
     expect(screen.queryByPlaceholderText('Search')).toBeInTheDocument();
+  });
+
+  it('Clear button is visible', () => {
+    render(<Search placeholder={placeholder} />);
+
+    const clearButton = screen.getByRole('button');
+    expect(clearButton).toBeInTheDocument();
+  });
+
+  it('Clear button should clear text from input', async () => {
+    render(<Search placeholder={placeholder} />);
+
+    const searchField = screen.getAllByRole('textbox')[0];
+    await userEvent.type(searchField, 'some text');
+    expect(searchField).toHaveValue('some text');
+
+    const clearButton = screen.getByRole('button');
+    await userEvent.click(clearButton);
+
+    expect(searchField).toHaveValue('');
   });
 });

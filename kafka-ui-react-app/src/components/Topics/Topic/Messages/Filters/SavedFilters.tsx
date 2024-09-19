@@ -51,6 +51,7 @@ const SavedFilters: FC<Props> = ({
       </>,
       () => {
         deleteFilter(index);
+        setSelectedFilter(-1);
       }
     );
   };
@@ -62,7 +63,9 @@ const SavedFilters: FC<Props> = ({
       </S.BackToCustomText>
       <S.SavedFiltersContainer>
         <S.CreatedFilter>Saved filters</S.CreatedFilter>
-        {filters.length === 0 && <p>No saved filter(s)</p>}
+        {filters.length === 0 && (
+          <S.NoSavedFilter>No saved filter(s)</S.NoSavedFilter>
+        )}
         {filters.map((filter, index) => (
           <S.SavedFilter
             key={Symbol(filter.name).toString()}
@@ -95,6 +98,7 @@ const SavedFilters: FC<Props> = ({
           buttonType="primary"
           type="button"
           onClick={activateFilter}
+          disabled={selectedFilter === -1}
         >
           Select filter
         </Button>

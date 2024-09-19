@@ -5,11 +5,15 @@ import ClusterContext, {
   initialValue,
 } from 'components/contexts/ClusterContext';
 import List from 'components/Connect/List/List';
-import { act, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render, WithRoute } from 'lib/testHelpers';
 import { clusterConnectConnectorPath, clusterConnectorsPath } from 'lib/paths';
-import { useConnectors, useDeleteConnector } from 'lib/hooks/api/kafkaConnect';
+import {
+  useConnectors,
+  useDeleteConnector,
+  useUpdateConnectorState,
+} from 'lib/hooks/api/kafkaConnect';
 
 const mockedUsedNavigate = jest.fn();
 const mockDelete = jest.fn();
@@ -22,6 +26,7 @@ jest.mock('react-router-dom', () => ({
 jest.mock('lib/hooks/api/kafkaConnect', () => ({
   useConnectors: jest.fn(),
   useDeleteConnector: jest.fn(),
+  useUpdateConnectorState: jest.fn(),
 }));
 
 const clusterName = 'local';
@@ -42,6 +47,10 @@ describe('Connectors List', () => {
       (useConnectors as jest.Mock).mockImplementation(() => ({
         data: connectors,
       }));
+      const restartConnector = jest.fn();
+      (useUpdateConnectorState as jest.Mock).mockImplementation(() => ({
+        mutateAsync: restartConnector,
+      }));
     });
 
     it('renders', async () => {
@@ -52,13 +61,11 @@ describe('Connectors List', () => {
 
     it('opens broker when row clicked', async () => {
       renderComponent();
-      await act(() => {
-        userEvent.click(
-          screen.getByRole('row', {
-            name: 'hdfs-source-connector first SOURCE FileStreamSource a b c RUNNING 2 of 2',
-          })
-        );
-      });
+      await userEvent.click(
+        screen.getByRole('row', {
+          name: 'hdfs-source-connector first SOURCE FileStreamSource a b c RUNNING 2 of 2',
+        })
+      );
       await waitFor(() =>
         expect(mockedUsedNavigate).toBeCalledWith(
           clusterConnectConnectorPath(
@@ -105,7 +112,7 @@ describe('Connectors List', () => {
       const submitButton = screen.getAllByRole('button', {
         name: 'Confirm',
       })[0];
-      await act(() => userEvent.click(submitButton));
+      await userEvent.click(submitButton);
       expect(mockDelete).toHaveBeenCalledWith();
     });
 

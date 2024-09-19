@@ -1,65 +1,94 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 import { clusterConsumerGroupsPath, RouteParamsClusterTopic } from 'lib/paths';
-import { Table } from 'components/common/table/Table/Table.styled';
-import TableHeaderCell from 'components/common/table/TableHeaderCell/TableHeaderCell';
-import { Tag } from 'components/common/Tag/Tag.styled';
-import { TableKeyLink } from 'components/common/table/Table/TableKeyLink.styled';
-import getTagColor from 'components/common/Tag/getTagColor';
+import { ConsumerGroup } from 'generated-sources';
 import useAppParams from 'lib/hooks/useAppParams';
 import { useTopicConsumerGroups } from 'lib/hooks/api/topics';
+import { ColumnDef } from '@tanstack/react-table';
+import Table, { LinkCell, TagCell } from 'components/common/NewTable';
+import Search from 'components/common/Search/Search';
+
+import * as S from './TopicConsumerGroups.styled';
 
 const TopicConsumerGroups: React.FC = () => {
+  const [keyword, setKeyword] = React.useState('');
   const { clusterName, topicName } = useAppParams<RouteParamsClusterTopic>();
 
-  const { data: consumerGroups } = useTopicConsumerGroups({
+  const { data = [] } = useTopicConsumerGroups({
     clusterName,
     topicName,
   });
+
+  const consumerGroups = React.useMemo(
+    () =>
+      data.filter(
+        (item) => item.groupId.toLocaleLowerCase().indexOf(keyword) > -1
+      ),
+    [data, keyword]
+  );
+
+  const columns = React.useMemo<ColumnDef<ConsumerGroup>[]>(
+    () => [
+      {
+        header: 'Consumer Group ID',
+        accessorKey: 'groupId',
+        enableSorting: false,
+        // eslint-disable-next-line react/no-unstable-nested-components
+        cell: ({ row }) => (
+          <LinkCell
+            value={row.original.groupId}
+            to={`${clusterConsumerGroupsPath(clusterName)}/${
+              row.original.groupId
+            }`}
+          />
+        ),
+      },
+      {
+        header: 'Active Consumers',
+        accessorKey: 'members',
+        enableSorting: false,
+      },
+      {
+        header: 'Consumer Lag',
+        accessorKey: 'consumerLag',
+        enableSorting: false,
+      },
+      {
+        header: 'Coordinator',
+        accessorKey: 'coordinator',
+        enableSorting: false,
+        cell: ({ getValue }) => {
+          const coordinator = getValue<ConsumerGroup['coordinator']>();
+          if (coordinator === undefined) {
+            return 0;
+          }
+          return coordinator.id;
+        },
+      },
+      {
+        header: 'State',
+        accessorKey: 'state',
+        enableSorting: false,
+        cell: TagCell,
+      },
+    ],
+    []
+  );
   return (
-    <Table isFullwidth>
-      <thead>
-        <tr>
-          <TableHeaderCell title="Consumer Group ID" />
-          <TableHeaderCell title="Active Consumers" />
-          <TableHeaderCell title="Messages Behind" />
-          <TableHeaderCell title="Coordinator" />
-          <TableHeaderCell title="State" />
-        </tr>
-      </thead>
-      <tbody>
-        {consumerGroups?.map((consumer) => (
-          <tr key={consumer.groupId}>
-            <TableKeyLink>
-              <Link
-                to={`${clusterConsumerGroupsPath(clusterName)}/${
-                  consumer.groupId
-                }`}
-              >
-                {consumer.groupId}
-              </Link>
-            </TableKeyLink>
-            <td>{consumer.members}</td>
-            <td>{consumer.messagesBehind}</td>
-            <td>{consumer.coordinator?.id}</td>
-            <td>
-              {consumer.state && (
-                <Tag color={getTagColor(consumer.state)}>{`${consumer.state
-                  .charAt(0)
-                  .toUpperCase()}${consumer.state
-                  .slice(1)
-                  .toLowerCase()}`}</Tag>
-              )}
-            </td>
-          </tr>
-        ))}
-        {(!consumerGroups || consumerGroups.length === 0) && (
-          <tr>
-            <td colSpan={10}>No active consumer groups</td>
-          </tr>
-        )}
-      </tbody>
-    </Table>
+    <>
+      <S.SearchWrapper>
+        <Search
+          onChange={setKeyword}
+          placeholder="Search by Consumer Name"
+          value={keyword}
+        />
+      </S.SearchWrapper>
+      <Table
+        columns={columns}
+        data={consumerGroups}
+        enableSorting
+        emptyMessage="No active consumer groups"
+      />
+    </>
   );
 };
 

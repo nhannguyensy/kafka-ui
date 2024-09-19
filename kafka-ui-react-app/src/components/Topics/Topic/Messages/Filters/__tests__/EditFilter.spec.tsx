@@ -3,7 +3,7 @@ import EditFilter, {
   EditFilterProps,
 } from 'components/Topics/Topic/Messages/Filters/EditFilter';
 import { render } from 'lib/testHelpers';
-import { screen, fireEvent, within, act } from '@testing-library/react';
+import { screen, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FilterEdit } from 'components/Topics/Topic/Messages/Filters/FilterModal';
 
@@ -27,15 +27,13 @@ describe('EditFilter component', () => {
     await act(() => {
       renderComponent();
     });
-    expect(screen.getByText(/edit saved filter/i)).toBeInTheDocument();
+    expect(screen.getByText(/edit filter/i)).toBeInTheDocument();
   });
 
   it('closes editFilter modal', async () => {
     const toggleEditModal = jest.fn();
-    await act(() => {
-      renderComponent({ toggleEditModal });
-    });
-    userEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+    renderComponent({ toggleEditModal });
+    await userEvent.click(screen.getByRole('button', { name: /Cancel/i }));
     expect(toggleEditModal).toHaveBeenCalledTimes(1);
   });
 
@@ -43,18 +41,15 @@ describe('EditFilter component', () => {
     const toggleEditModal = jest.fn();
     const editSavedFilter = jest.fn();
 
-    await act(() => {
-      renderComponent({ toggleEditModal, editSavedFilter });
-    });
+    renderComponent({ toggleEditModal, editSavedFilter });
 
     const inputs = screen.getAllByRole('textbox');
     const textAreaElement = inputs[0] as HTMLTextAreaElement;
     const inputNameElement = inputs[1];
-    await act(() => {
-      userEvent.paste(textAreaElement, 'edited code');
-      userEvent.type(inputNameElement, 'edited name');
-      fireEvent.submit(screen.getByRole('form'));
-    });
+    textAreaElement.focus();
+    await userEvent.paste('edited code');
+    await userEvent.type(inputNameElement, 'edited name');
+    await userEvent.click(screen.getByRole('button', { name: /Save/i }));
     expect(toggleEditModal).toHaveBeenCalledTimes(1);
     expect(editSavedFilter).toHaveBeenCalledTimes(1);
   });

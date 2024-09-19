@@ -1,7 +1,9 @@
 package com.provectus.kafka.ui.service;
 
-import com.provectus.kafka.ui.emitter.BackwardRecordEmitter;
-import com.provectus.kafka.ui.emitter.ForwardRecordEmitter;
+import com.google.common.util.concurrent.RateLimiter;
+import com.provectus.kafka.ui.config.ClustersProperties;
+import com.provectus.kafka.ui.emitter.BackwardEmitter;
+import com.provectus.kafka.ui.emitter.ForwardEmitter;
 import com.provectus.kafka.ui.emitter.MessageFilters;
 import com.provectus.kafka.ui.emitter.TailingEmitter;
 import com.provectus.kafka.ui.exception.TopicNotFoundException;
@@ -11,21 +13,24 @@ import com.provectus.kafka.ui.model.CreateTopicMessageDTO;
 import com.provectus.kafka.ui.model.KafkaCluster;
 import com.provectus.kafka.ui.model.MessageFilterTypeDTO;
 import com.provectus.kafka.ui.model.SeekDirectionDTO;
+import com.provectus.kafka.ui.model.SmartFilterTestExecutionDTO;
+import com.provectus.kafka.ui.model.SmartFilterTestExecutionResultDTO;
+import com.provectus.kafka.ui.model.TopicMessageDTO;
 import com.provectus.kafka.ui.model.TopicMessageEventDTO;
-import com.provectus.kafka.ui.serdes.ConsumerRecordDeserializer;
 import com.provectus.kafka.ui.serdes.ProducerRecordCreator;
-import com.provectus.kafka.ui.util.OffsetsSeekBackward;
-import com.provectus.kafka.ui.util.OffsetsSeekForward;
-import com.provectus.kafka.ui.util.ResultSizeLimiter;
+import com.provectus.kafka.ui.util.SslPropertiesUtil;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.clients.admin.OffsetSpec;
@@ -38,22 +43,78 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class MessagesService {
+
+  private static final int DEFAULT_MAX_PAGE_SIZE = 500;
+  private static final int DEFAULT_PAGE_SIZE = 100;
+  // limiting UI messages rate to 20/sec in tailing mode
+  private static final int TAILING_UI_MESSAGE_THROTTLE_RATE = 20;
+
   private final AdminClientService adminClientService;
   private final DeserializationService deserializationService;
   private final ConsumerGroupService consumerGroupService;
+  private final int maxPageSize;
+  private final int defaultPageSize;
+
+  public MessagesService(AdminClientService adminClientService,
+                         DeserializationService deserializationService,
+                         ConsumerGroupService consumerGroupService,
+                         ClustersProperties properties) {
+    this.adminClientService = adminClientService;
+    this.deserializationService = deserializationService;
+    this.consumerGroupService = consumerGroupService;
+
+    var pollingProps = Optional.ofNullable(properties.getPolling())
+        .orElseGet(ClustersProperties.PollingProperties::new);
+    this.maxPageSize = Optional.ofNullable(pollingProps.getMaxPageSize())
+        .orElse(DEFAULT_MAX_PAGE_SIZE);
+    this.defaultPageSize = Optional.ofNullable(pollingProps.getDefaultPageSize())
+        .orElse(DEFAULT_PAGE_SIZE);
+  }
 
   private Mono<TopicDescription> withExistingTopic(KafkaCluster cluster, String topicName) {
     return adminClientService.get(cluster)
         .flatMap(client -> client.describeTopic(topicName))
         .switchIfEmpty(Mono.error(new TopicNotFoundException()));
+  }
+
+  public static SmartFilterTestExecutionResultDTO execSmartFilterTest(SmartFilterTestExecutionDTO execData) {
+    Predicate<TopicMessageDTO> predicate;
+    try {
+      predicate = MessageFilters.createMsgFilter(
+          execData.getFilterCode(),
+          MessageFilterTypeDTO.GROOVY_SCRIPT
+      );
+    } catch (Exception e) {
+      log.info("Smart filter '{}' compilation error", execData.getFilterCode(), e);
+      return new SmartFilterTestExecutionResultDTO()
+          .error("Compilation error : " + e.getMessage());
+    }
+    try {
+      var result = predicate.test(
+          new TopicMessageDTO()
+              .key(execData.getKey())
+              .content(execData.getValue())
+              .headers(execData.getHeaders())
+              .offset(execData.getOffset())
+              .partition(execData.getPartition())
+              .timestamp(
+                  Optional.ofNullable(execData.getTimestampMs())
+                      .map(ts -> OffsetDateTime.ofInstant(Instant.ofEpochMilli(ts), ZoneOffset.UTC))
+                      .orElse(null))
+      );
+      return new SmartFilterTestExecutionResultDTO()
+          .result(result);
+    } catch (Exception e) {
+      log.info("Smart filter {} execution error", execData, e);
+      return new SmartFilterTestExecutionResultDTO()
+          .error("Execution error : " + e.getMessage());
+    }
   }
 
   public Mono<Void> deleteTopicMessages(KafkaCluster cluster, String topicName,
@@ -68,8 +129,8 @@ public class MessagesService {
   private Mono<Map<TopicPartition, Long>> offsetsForDeletion(KafkaCluster cluster, String topicName,
                                                              List<Integer> partitionsToInclude) {
     return adminClientService.get(cluster).flatMap(ac ->
-        ac.listOffsets(topicName, OffsetSpec.earliest())
-            .zipWith(ac.listOffsets(topicName, OffsetSpec.latest()),
+        ac.listTopicOffsets(topicName, OffsetSpec.earliest(), true)
+            .zipWith(ac.listTopicOffsets(topicName, OffsetSpec.latest(), true),
                 (start, end) ->
                     end.entrySet().stream()
                         .filter(e -> partitionsToInclude.isEmpty()
@@ -83,6 +144,7 @@ public class MessagesService {
   public Mono<RecordMetadata> sendMessage(KafkaCluster cluster, String topic,
                                           CreateTopicMessageDTO msg) {
     return withExistingTopic(cluster, topic)
+        .publishOn(Schedulers.boundedElastic())
         .flatMap(desc -> sendMessageImpl(cluster, desc, msg));
   }
 
@@ -101,12 +163,7 @@ public class MessagesService {
             msg.getValueSerde().get()
         );
 
-    Properties properties = new Properties();
-    properties.putAll(cluster.getProperties());
-    properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
-    properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
-    properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
-    try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(properties)) {
+    try (KafkaProducer<byte[], byte[]> producer = createProducer(cluster, Map.of())) {
       ProducerRecord<byte[], byte[]> producerRecord = producerRecordCreator.create(
           topicDescription.name(),
           msg.getPartition(),
@@ -128,77 +185,88 @@ public class MessagesService {
     }
   }
 
+  public static KafkaProducer<byte[], byte[]> createProducer(KafkaCluster cluster,
+                                                             Map<String, Object> additionalProps) {
+    Properties properties = new Properties();
+    SslPropertiesUtil.addKafkaSslProperties(cluster.getOriginalProperties().getSsl(), properties);
+    properties.putAll(cluster.getProperties());
+    properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.getBootstrapServers());
+    properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+    properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
+    properties.putAll(additionalProps);
+    return new KafkaProducer<>(properties);
+  }
+
   public Flux<TopicMessageEventDTO> loadMessages(KafkaCluster cluster, String topic,
-                                                 ConsumerPosition consumerPosition, String query,
+                                                 ConsumerPosition consumerPosition,
+                                                 @Nullable String query,
                                                  MessageFilterTypeDTO filterQueryType,
-                                                 int limit,
+                                                 @Nullable Integer pageSize,
+                                                 SeekDirectionDTO seekDirection,
                                                  @Nullable String keySerde,
                                                  @Nullable String valueSerde) {
     return withExistingTopic(cluster, topic)
         .flux()
+        .publishOn(Schedulers.boundedElastic())
         .flatMap(td -> loadMessagesImpl(cluster, topic, consumerPosition, query,
-            filterQueryType, limit, keySerde, valueSerde));
+            filterQueryType, fixPageSize(pageSize), seekDirection, keySerde, valueSerde));
+  }
+
+  private int fixPageSize(@Nullable Integer pageSize) {
+    return Optional.ofNullable(pageSize)
+        .filter(ps -> ps > 0 && ps <= maxPageSize)
+        .orElse(defaultPageSize);
   }
 
   private Flux<TopicMessageEventDTO> loadMessagesImpl(KafkaCluster cluster,
                                                       String topic,
                                                       ConsumerPosition consumerPosition,
-                                                      String query,
+                                                      @Nullable String query,
                                                       MessageFilterTypeDTO filterQueryType,
                                                       int limit,
+                                                      SeekDirectionDTO seekDirection,
                                                       @Nullable String keySerde,
                                                       @Nullable String valueSerde) {
 
-    java.util.function.Consumer<? super FluxSink<TopicMessageEventDTO>> emitter;
-    ConsumerRecordDeserializer recordDeserializer =
-        deserializationService.deserializerFor(cluster, topic, keySerde, valueSerde);
-    if (consumerPosition.getSeekDirection().equals(SeekDirectionDTO.FORWARD)) {
-      emitter = new ForwardRecordEmitter(
+    var deserializer = deserializationService.deserializerFor(cluster, topic, keySerde, valueSerde);
+    var filter = getMsgFilter(query, filterQueryType);
+    var emitter = switch (seekDirection) {
+      case FORWARD -> new ForwardEmitter(
           () -> consumerGroupService.createConsumer(cluster),
-          new OffsetsSeekForward(topic, consumerPosition),
-          recordDeserializer
+          consumerPosition, limit, deserializer, filter, cluster.getPollingSettings()
       );
-    } else if (consumerPosition.getSeekDirection().equals(SeekDirectionDTO.BACKWARD)) {
-      emitter = new BackwardRecordEmitter(
-          (Map<String, Object> props) -> consumerGroupService.createConsumer(cluster, props),
-          new OffsetsSeekBackward(topic, consumerPosition, limit),
-          recordDeserializer
-      );
-    } else {
-      emitter = new TailingEmitter(
-          recordDeserializer,
+      case BACKWARD -> new BackwardEmitter(
           () -> consumerGroupService.createConsumer(cluster),
-          new OffsetsSeekForward(topic, consumerPosition)
+          consumerPosition, limit, deserializer, filter, cluster.getPollingSettings()
       );
-    }
+      case TAILING -> new TailingEmitter(
+          () -> consumerGroupService.createConsumer(cluster),
+          consumerPosition, deserializer, filter, cluster.getPollingSettings()
+      );
+    };
     return Flux.create(emitter)
-        .filter(getMsgFilter(query, filterQueryType))
-        .takeWhile(createTakeWhilePredicate(consumerPosition, limit))
-        .subscribeOn(Schedulers.boundedElastic())
-        .share();
+        .map(throttleUiPublish(seekDirection));
   }
 
-  private Predicate<TopicMessageEventDTO> createTakeWhilePredicate(
-      ConsumerPosition consumerPosition, int limit) {
-    return consumerPosition.getSeekDirection() == SeekDirectionDTO.TAILING
-        ? evt -> true // no limit for tailing
-        : new ResultSizeLimiter(limit);
-  }
-
-  private Predicate<TopicMessageEventDTO> getMsgFilter(String query, MessageFilterTypeDTO filterQueryType) {
+  private Predicate<TopicMessageDTO> getMsgFilter(String query,
+                                                  MessageFilterTypeDTO filterQueryType) {
     if (StringUtils.isEmpty(query)) {
       return evt -> true;
     }
-    filterQueryType = Optional.ofNullable(filterQueryType)
-        .orElse(MessageFilterTypeDTO.STRING_CONTAINS);
-    var messageFilter = MessageFilters.createMsgFilter(query, filterQueryType);
-    return evt -> {
-      // we only apply filter for message events
-      if (evt.getType() == TopicMessageEventDTO.TypeEnum.MESSAGE) {
-        return messageFilter.test(evt.getMessage());
-      }
-      return true;
-    };
+    return MessageFilters.createMsgFilter(query, filterQueryType);
+  }
+
+  private <T> UnaryOperator<T> throttleUiPublish(SeekDirectionDTO seekDirection) {
+    if (seekDirection == SeekDirectionDTO.TAILING) {
+      RateLimiter rateLimiter = RateLimiter.create(TAILING_UI_MESSAGE_THROTTLE_RATE);
+      return m -> {
+        rateLimiter.acquire(1);
+        return m;
+      };
+    }
+    // there is no need to throttle UI production rate for non-tailing modes, since max number of produced
+    // messages is limited for them (with page size)
+    return UnaryOperator.identity();
   }
 
 }

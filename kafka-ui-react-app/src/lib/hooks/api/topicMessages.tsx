@@ -13,9 +13,9 @@ import {
 } from 'generated-sources';
 import { showServerError } from 'lib/errorHandling';
 import toast from 'react-hot-toast';
-import { StopLoading } from 'components/Topics/Topic/MessagesV2/FiltersBar/FiltersBar.styled';
 import { useQuery } from '@tanstack/react-query';
 import { messagesApiClient } from 'lib/api';
+import { StopLoading } from 'components/Topics/Topic/Messages/Messages.styled';
 
 interface UseTopicMessagesProps {
   clusterName: ClusterName;
@@ -23,7 +23,7 @@ interface UseTopicMessagesProps {
   searchParams: URLSearchParams;
 }
 
-export type ConsumingMode =
+type ConsumingMode =
   | 'live'
   | 'oldest'
   | 'newest'
@@ -51,7 +51,9 @@ export const useTopicMessages = ({
   React.useEffect(() => {
     const fetchData = async () => {
       setIsFetching(true);
-      const url = `${BASE_PARAMS.basePath}/api/clusters/${clusterName}/topics/${topicName}/messages`;
+      const url = `${BASE_PARAMS.basePath}/api/clusters/${encodeURIComponent(
+        clusterName
+      )}/topics/${topicName}/messages`;
       const requestParams = new URLSearchParams({
         limit,
         seekTo: seekTo.replaceAll('-', '::').replaceAll('.', ','),
@@ -183,11 +185,11 @@ export const useTopicMessages = ({
 
 export function useSerdes(props: GetSerdesRequest) {
   const { clusterName, topicName, use } = props;
+
   return useQuery(
     ['clusters', clusterName, 'topics', topicName, 'serdes', use],
     () => messagesApiClient.getSerdes(props),
     {
-      refetchOnMount: false,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       refetchInterval: false,
